@@ -1,0 +1,39 @@
+name: ORIL runtime diagnostics
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/oril-runtime-diagnostics.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          repository: js775315672-spec/Harness-Ouroboros-MCP
+          name: p3l-w08-pinned-binary
+          run-id: 44515315325
+          github-token: ${{ github.token }}
+          path: oril-bin
+      - name: Check startup and arguments with an absent model
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 76f4fb11d626bddcb10edb6ee4a28aaea8ad8a089a21a5c171f26566ce62ded4 oril-bin/llama-completion | sha256sum -c -
+          chmod 755 oril-bin/llama-completion
+          cpus=$(python3 -c 'import os; ids=sorted(os.sched_getaffinity(0)); print(",".join(map(str,ids[:2])))')
+          test -n "$cpus"
+          timeout 15s taskset -c "$cpus" oril-bin/llama-completion --help > "$RUNNER_TEMP/help.txt" 2>&1 || { cat "$RUNNER_TEMP/help.txt"; exit 1; }
+          fixture="$RUNNER_TEMP/absent-model.gguf"
+          test ! -e "$fixture"
+          status=0
+          timeout 15s taskset -c "$cpus" oril-bin/llama-completion --model "$fixture" --prompt diagnostic \
+            --n-predict 800 --ctx-size 8192 --threads 4 --temp 0 --seed 1085 \
+            --no-display-prompt --simple-io --offline --log-verbosity 1 --color off -no-cnv --no-escape \
+            > "$RUNNER_TEMP/startup.txt" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/startup.txt"
+          test "$status" -ne 0
+          ! grep -qiE 'invalid argument|unknown argument|unrecognized option' "$RUNNER_TEMP/startup.txt"
+          grep -qF 'absent-model.gguf' "$RUNNER_TEMP/startup.txt"
