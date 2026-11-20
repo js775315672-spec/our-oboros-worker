@@ -1,0 +1,7 @@
+{
+  "task": "oril-cycle-01",
+  "failed_run": 44670321642,
+  "diagnostic_run": 44670527543,
+  "cause": "dynamic loader rejected the binary before model initialization",
+  "model_calls": 0
+}
