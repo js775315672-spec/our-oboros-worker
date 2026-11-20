@@ -1,0 +1,56 @@
+name: ORIL Cycle 01 worker
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/oril-cycle-01-worker.yml, tasks/oril-cycle-01.json]
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source:
+    if: github.repository == 'js775315672-spec/our-oboros-worker' && github.ref == 'refs/heads/main' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify the pinned request and the original source
+        run: |
+          set -euo pipefail
+          task=tasks/oril-cycle-01.json
+          source=js775315672-spec/Harness-Ouroboros-MCP
+          base=068cbd75f70a272094f22cfea27dc1e44fc9b0de
+          input=c3dea9ec3f919ede9d8a362e1e7c847555f49b18
+          digest=6b6807de14ac04bb5f3cdca04918a63bbd0fd1b83c4dc8b656d6b1451d1c205d
+          path=docs/evolution/cycle-01-model-input.chatml
+          target=scripts/p3l_hydra_standing.py
+          jq -e --arg source "$source" --arg base "$base" --arg input "$input" --arg digest "$digest" --arg path "$path" --arg target "$target" '
+            .source_repository == $source and .base_sha == $base and .input_commit == $input and
+            .input_sha256 == $digest and .input_path == $path and .target == $target and
+            .model_calls_allowed == 1 and .aggregate_cpu_seconds == 1200
+          ' "$task" >/dev/null
+          git init -q "$RUNNER_TEMP/original"
+          git -C "$RUNNER_TEMP/original" fetch --no-tags --depth 1 "https://github.com/$source.git" "$base" "$input"
+          git -C "$RUNNER_TEMP/original" cat-file -e "$base:$target"
+          git -C "$RUNNER_TEMP/original" show "$input:$path" > "$RUNNER_TEMP/cycle-01.chatml"
+          printf '%s  %s\n' "$digest" "$RUNNER_TEMP/cycle-01.chatml" | sha256sum -c -
+      - name: Check access to the pinned CPU binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          repository: js775315672-spec/Harness-Ouroboros-MCP
+          name: p3l-w08-pinned-binary
+          run-id: 44515315325
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/oril-bin
+      - name: Verify binary SHA and preserve handoff receipt
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' 76f4fb11d626bddcb10edb6ee4a28aaea8ad8a089a21a5c171f26566ce62ded4 "$RUNNER_TEMP/oril-bin/llama-completion" | sha256sum -c -
+          jq -n --slurpfile task tasks/oril-cycle-01.json '{task:$task[0],model_calls:0}' > "$RUNNER_TEMP/handoff.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: oril-cycle-01-handoff
+          path: ${{ runner.temp }}/handoff.json
+          if-no-files-found: error
