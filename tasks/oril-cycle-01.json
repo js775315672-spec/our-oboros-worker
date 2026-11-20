@@ -1,0 +1,14 @@
+{
+  "schema": "ouroboros-worker-task-v1",
+  "task": "oril-cycle-01",
+  "source_repository": "js775315672-spec/Harness-Ouroboros-MCP",
+  "base_sha": "068cbd75f70a272094f22cfea27dc1e44fc9b0de",
+  "input_commit": "c3dea9ec3f919ede9d8a362e1e7c847555f49b18",
+  "input_path": "docs/evolution/cycle-01-model-input.chatml",
+  "input_sha256": "6b6807de14ac04bb5f3cdca04918a63bbd0fd1b83c4dc8b656d6b1451d1c205d",
+  "target": "scripts/p3l_hydra_standing.py",
+  "tokenizer_run": 44666053823,
+  "model_calls_allowed": 1,
+  "aggregate_cpu_seconds": 1200,
+  "output_artifact": "oril-cycle-01-candidate"
+}
