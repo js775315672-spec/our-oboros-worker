@@ -107,7 +107,7 @@ jobs:
           from pathlib import Path
           root = Path(os.environ["RUNNER_TEMP"])
           raw = (root / "result.txt").read_text(encoding="utf-8")
-          lines = raw.strip("\\r\\n").splitlines()
+          lines = raw.strip("\r\n").splitlines()
           if lines and lines[0] in ("```diff", "```patch", "```") and lines[-1] == "```":
               lines = lines[1:-1]
           patch = ("\n".join(lines) + "\n").encode()
