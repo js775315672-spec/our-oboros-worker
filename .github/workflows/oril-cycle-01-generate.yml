@@ -1,0 +1,102 @@
+name: ORIL Cycle 01 candidate generation
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: oril-cycle-01-generation
+  cancel-in-progress: false
+jobs:
+  generate:
+    if: github.repository == 'js775315672-spec/our-oboros-worker' && github.ref == 'refs/heads/main' && github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 16
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: js775315672-spec/Harness-Ouroboros-MCP
+          ref: c3dea9ec3f919ede9d8a362e1e7c847555f49b18
+          path: input
+          persist-credentials: false
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          repository: js775315672-spec/Harness-Ouroboros-MCP
+          ref: 179bf5eb704b35a03935248edd0d3491ab4f441d
+          path: downloader
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          repository: js775315672-spec/Harness-Ouroboros-MCP
+          name: p3l-w08-pinned-binary
+          run-id: 44515315325
+          github-token: ${{ github.token }}
+          path: oril-bin
+      - name: Prepare and verify pinned inputs
+        env:
+          HF_HUB_DISABLE_XET: "1"
+          HF_HUB_DOWNLOAD_TIMEOUT: "60"
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' \
+            76f4fb11d626bddcb10edb6ee4a28aaea8ad8a089a21a5c171f26566ce62ded4 oril-bin/llama-completion \
+            6b6807de14ac04bb5f3cdca04918a63bbd0fd1b83c4dc8b656d6b1451d1c205d input/docs/evolution/cycle-01-model-input.chatml | sha256sum -c -
+          chmod 755 oril-bin/llama-completion
+          python3 -m venv "$RUNNER_TEMP/gguf-venv"
+          "$RUNNER_TEMP/gguf-venv/bin/pip" install --disable-pip-version-check huggingface_hub==0.36.0
+          timeout --kill-after=10s 8m "$RUNNER_TEMP/gguf-venv/bin/python" -u downloader/scripts/gguf_official_download.py \
+            --model 7b --destination models --revision 13fb94bfda8c8cf22497dc57b78f391a9acb426a \
+            --sha256 509287f78cb4d4cf6b3843734733b914b2c158e43e22a7f4bf5e963800894d3c \
+            --report "$RUNNER_TEMP/model-provenance.json"
+      - name: Reserve the only approved model start
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref=refs/heads/claims/oril-cycle-01 -f sha="$GITHUB_SHA" >/dev/null
+      - name: Generate the candidate once
+        env:
+          OMP_NUM_THREADS: "4"
+        run: |
+          set -euo pipefail
+          cpus=$(python3 -c 'import os; ids=sorted(os.sched_getaffinity(0)); assert len(ids)>=2; print(",".join(map(str,ids[:2])))')
+          mkdir "$RUNNER_TEMP/candidate"
+          prompt=$(cat input/docs/evolution/cycle-01-model-input.chatml; printf .)
+          prompt=${prompt%.}
+          ulimit -t 480
+          timeout --signal=KILL 240s taskset -c "$cpus" oril-bin/llama-completion \
+            --model models/qwen2.5-coder-7b-instruct-q4_k_m.gguf \
+            --prompt "$prompt" \
+            --n-predict 800 --ctx-size 8192 --threads 4 --temp 0 --seed 1085 \
+            --no-display-prompt --simple-io --offline --log-verbosity 1 --color off -no-cnv --no-escape \
+            > "$RUNNER_TEMP/result.txt" 2> "$RUNNER_TEMP/model.log"
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          raw = (root / "result.txt").read_text(encoding="utf-8")
+          lines = raw.strip().splitlines()
+          if lines and lines[0] in ("```diff", "```patch", "```") and lines[-1] == "```":
+              lines = lines[1:-1]
+          patch = ("\n".join(lines) + "\n").encode()
+          if not patch.startswith((b"diff --git ", b"--- ")) or len(patch) > 16000:
+              raise SystemExit("The model did not return a bounded unified diff")
+          out = root / "candidate"
+          (out / "candidate.patch").write_bytes(patch)
+          (out / "receipt.json").write_text(json.dumps({
+              "task": "oril-cycle-01", "run": int(os.environ["GITHUB_RUN_ID"]),
+              "worker_head": os.environ["GITHUB_SHA"],
+              "base_sha": "068cbd75f70a272094f22cfea27dc1e44fc9b0de",
+              "input_sha256": "6b6807de14ac04bb5f3cdca04918a63bbd0fd1b83c4dc8b656d6b1451d1c205d",
+              "patch_sha256": hashlib.sha256(patch).hexdigest(), "model_calls": 1
+          }) + "\n")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: oril-cycle-01-candidate
+          path: ${{ runner.temp }}/candidate/
+          if-no-files-found: error
